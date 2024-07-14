@@ -1,73 +1,129 @@
-﻿using Dalamud.Game.Command;
+using Dalamud.Game.Command;
 using Dalamud.IoC;
 using Dalamud.Plugin;
 using System.IO;
+using System.Collections.Generic;
 using Dalamud.Interface.Windowing;
 using Dalamud.Plugin.Services;
 using SamplePlugin.Windows;
+using Lumina;
+using Lumina.Data;
+using ExcelAchievement = Lumina.Excel.GeneratedSheets.Achievement;
+using GameUIAchievement = FFXIVClientStructs.FFXIV.Client.Game.UI.Achievement;
+using System;
+using Dalamud.Interface.Animation.EasingFunctions;
+using Lumina.Data.Parsing;
+using FFXIVClientStructs.FFXIV.Client.Game.Fate;
 
-namespace SamplePlugin;
-
-public sealed class Plugin : IDalamudPlugin
+namespace SamplePlugin
 {
-    [PluginService] internal static IDalamudPluginInterface PluginInterface { get; private set; } = null!;
-    [PluginService] internal static ITextureProvider TextureProvider { get; private set; } = null!;
-    [PluginService] internal static ICommandManager CommandManager { get; private set; } = null!;
-
-    private const string CommandName = "/pmycommand";
-
-    public Configuration Configuration { get; init; }
-
-    public readonly WindowSystem WindowSystem = new("SamplePlugin");
-    private ConfigWindow ConfigWindow { get; init; }
-    private MainWindow MainWindow { get; init; }
-
-    public Plugin()
+    public sealed class Plugin : IDalamudPlugin
     {
-        Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
+        [PluginService] internal static IDalamudPluginInterface PluginInterface { get; private set; } = null!;
+        [PluginService] internal static IDataManager DataManager { get; private set; } = null!;
 
-        // you might normally want to embed resources and load them from the manifest stream
-        var goatImagePath = Path.Combine(PluginInterface.AssemblyLocation.Directory?.FullName!, "goat.png");
+        [PluginService] internal static ITextureProvider TextureProvider { get; private set; } = null!;
+        [PluginService] internal static ICommandManager CommandManager { get; private set; } = null!;
+        [PluginService] internal static IPluginLog PluginLog { get; private set; } = null!;
+        [PluginService] public static IClientState ClientState { get; set; } = null!;
+        private const string CommandName = "/achievementbuddy";
+        private const string AltCommandName = "/acb";
+        public Configuration Configuration { get; init; }
 
-        ConfigWindow = new ConfigWindow(this);
-        MainWindow = new MainWindow(this, goatImagePath);
+        public readonly WindowSystem WindowSystem = new("SamplePlugin");
+        private ConfigWindow ConfigWindow { get; init; }
+        private MainWindow MainWindow { get; init; }
 
-        WindowSystem.AddWindow(ConfigWindow);
-        WindowSystem.AddWindow(MainWindow);
+        private GameData? gameData;
+        private List<ExcelAchievement> loadedAchievements = new List<ExcelAchievement>();
+        private Dictionary<uint, bool> achievementCompletion = new Dictionary<uint, bool>();
 
-        CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
+        public Plugin()
         {
-            HelpMessage = "A useful message to display in /xlhelp"
-        });
+            Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
 
-        PluginInterface.UiBuilder.Draw += DrawUI;
+            InitializeLumina();
+            ConfigWindow = new ConfigWindow(this);
+            MainWindow = new MainWindow(this, loadedAchievements, achievementCompletion);
 
-        // This adds a button to the plugin installer entry of this plugin which allows
-        // to toggle the display status of the configuration ui
-        PluginInterface.UiBuilder.OpenConfigUi += ToggleConfigUI;
+            WindowSystem.AddWindow(ConfigWindow);
+            WindowSystem.AddWindow(MainWindow);
 
-        // Adds another button that is doing the same but for the main ui of the plugin
-        PluginInterface.UiBuilder.OpenMainUi += ToggleMainUI;
+            CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
+            {
+                HelpMessage = "A useful message to display in /xlhelp"
+            });
+
+            CommandManager.AddHandler(AltCommandName, new CommandInfo(OnCommand)
+            {
+                HelpMessage = "A useful message to display in /xlhelp"
+            });
+
+            PluginInterface.UiBuilder.Draw += DrawUI;
+
+            PluginInterface.UiBuilder.OpenConfigUi += ToggleConfigUI;
+            PluginInterface.UiBuilder.OpenMainUi += ToggleMainUI;
+
+            CheckAchievements();
+        }
+
+        private void InitializeLumina()
+        {
+            gameData = DataManager.GameData;
+            LoadAchievements();
+        }
+
+        private void LoadAchievements()
+        {
+            if (gameData == null) return;
+
+            var achievementsSheet = gameData.GetExcelSheet<ExcelAchievement>();
+            if (achievementsSheet != null)
+            {
+                foreach (var achievement in achievementsSheet)
+                {
+                if (achievement.Points == 0) continue;
+                    if (achievement.AchievementCategory.Value.AchievementKind.Value.Name == "Legacy") continue;
+                    if (achievement.AchievementCategory.Value.Name == "Seasonal Events") continue;
+                    loadedAchievements.Add(achievement);
+                }
+            }
+        }
+
+        private unsafe void CheckAchievements()
+        {
+            var achievementInstance = GameUIAchievement.Instance();
+            if (achievementInstance == null) return;
+
+            foreach (var achievement in loadedAchievements)
+            {
+                if (achievementInstance->IsComplete((int)achievement.RowId))
+                {
+                    PluginLog.Info(achievement.Name);
+                };
+                bool isComplete = achievementInstance->IsComplete((int)achievement.RowId);
+                achievementCompletion[achievement.RowId] = isComplete;
+            }
+        }
+
+        public void Dispose()
+        {
+            WindowSystem.RemoveAllWindows();
+
+            ConfigWindow.Dispose();
+            MainWindow.Dispose();
+
+            CommandManager.RemoveHandler(CommandName);
+        }
+
+        private void OnCommand(string command, string args)
+        {
+            ToggleMainUI();
+        }
+
+        private void DrawUI() => WindowSystem.Draw();
+
+        public void ToggleConfigUI() => ConfigWindow.Toggle();
+        public void ToggleMainUI() => MainWindow.Toggle();
     }
-
-    public void Dispose()
-    {
-        WindowSystem.RemoveAllWindows();
-
-        ConfigWindow.Dispose();
-        MainWindow.Dispose();
-
-        CommandManager.RemoveHandler(CommandName);
-    }
-
-    private void OnCommand(string command, string args)
-    {
-        // in response to the slash command, just toggle the display status of our main ui
-        ToggleMainUI();
-    }
-
-    private void DrawUI() => WindowSystem.Draw();
-
-    public void ToggleConfigUI() => ConfigWindow.Toggle();
-    public void ToggleMainUI() => MainWindow.Toggle();
 }

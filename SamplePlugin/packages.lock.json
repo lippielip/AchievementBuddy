@@ -7,6 +7,20 @@
         "requested": "[2.1.13, )",
         "resolved": "2.1.13",
         "contentHash": "rMN1omGe8536f4xLMvx9NwfvpAc9YFFfeXJ1t4P4PE6Gu8WCIoFliR1sh07hM+bfODmesk/dvMbji7vNI+B/pQ=="
+      },
+      "Lumina": {
+        "type": "Direct",
+        "requested": "[4.1.0, )",
+        "resolved": "4.1.0",
+        "contentHash": "bl+CdE2TXGU6aUCiqcrqiiiXJ0eGpfK0c+CwvCL+SY78ydV/zMqLH61XsU1+4CsjSU1+jDiRlLw2/0bIIE6guQ==",
+        "dependencies": {
+          "Microsoft.Extensions.ObjectPool": "9.0.0-preview.1.24081.5"
+        }
+      },
+      "Microsoft.Extensions.ObjectPool": {
+        "type": "Transitive",
+        "resolved": "9.0.0-preview.1.24081.5",
+        "contentHash": "aAR7YW+pUUdvHk3vj7GtAi71dWGDIuY9270lsmQ6lKw23zzY+r8pLP3cGNbJdlnA9VWl+S+gnIVkBCqj2ROlEg=="
       }
     }
   }

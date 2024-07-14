@@ -1,58 +1,84 @@
-﻿using System;
+using System;
+using System.Collections.Generic;
 using System.Numerics;
 using Dalamud.Interface.Internal;
+using Dalamud.Interface.Textures;
 using Dalamud.Interface.Utility;
 using Dalamud.Interface.Windowing;
+using Dalamud.IoC;
 using Dalamud.Plugin.Services;
 using ImGuiNET;
+using Lumina.Excel.GeneratedSheets;
 
-namespace SamplePlugin.Windows;
-
-public class MainWindow : Window, IDisposable
+namespace SamplePlugin.Windows
 {
-    private string GoatImagePath;
-    private Plugin Plugin;
-
-    // We give this window a hidden ID using ##
-    // So that the user will see "My Amazing Window" as window title,
-    // but for ImGui the ID is "My Amazing Window##With a hidden ID"
-    public MainWindow(Plugin plugin, string goatImagePath)
-        : base("My Amazing Window##With a hidden ID", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse)
+    public class MainWindow : Window, IDisposable
     {
-        SizeConstraints = new WindowSizeConstraints
+        private Plugin Plugin;
+        private List<Achievement> Achievements;
+        private Dictionary<uint, bool> AchievementCompletion;
+        [PluginService] internal static ITextureProvider TextureProvider { get; private set; } = null!;
+
+        public MainWindow(Plugin plugin, List<Achievement> achievements, Dictionary<uint, bool> achievementCompletion)
+            : base("My Amazing Window##With a hidden ID", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse)
         {
-            MinimumSize = new Vector2(375, 330),
-            MaximumSize = new Vector2(float.MaxValue, float.MaxValue)
-        };
+            SizeConstraints = new WindowSizeConstraints
+            {
+                MinimumSize = new Vector2(375, 330),
+                MaximumSize = new Vector2(float.MaxValue, float.MaxValue)
+            };
 
-        GoatImagePath = goatImagePath;
-        Plugin = plugin;
-    }
-
-    public void Dispose() { }
-
-    public override void Draw()
-    {
-        ImGui.Text($"The random config bool is {Plugin.Configuration.SomePropertyToBeSavedAndWithADefault}");
-
-        if (ImGui.Button("Show Settings"))
-        {
-            Plugin.ToggleConfigUI();
+            Plugin = plugin;
+            Achievements = achievements;
+            AchievementCompletion = achievementCompletion;
         }
 
-        ImGui.Spacing();
+        public void Dispose() { }
 
-        ImGui.Text("Have a goat:");
-        var goatImage = Plugin.TextureProvider.GetFromFile(GoatImagePath).GetWrapOrDefault();
-        if (goatImage != null)
+        public override void Draw()
         {
-            ImGuiHelpers.ScaledIndent(55f);
-            ImGui.Image(goatImage.ImGuiHandle, new Vector2(goatImage.Width, goatImage.Height));
-            ImGuiHelpers.ScaledIndent(-55f);
-        }
-        else
-        {
-            ImGui.Text("Image not found.");
+
+            int totalAchievements = Achievements.Count;
+            int completedAchievements = 0;
+            foreach (var achievement in Achievements)
+            {
+                if (AchievementCompletion.TryGetValue(achievement.RowId, out var isCompleted) && isCompleted)
+                {
+                    completedAchievements++;
+                }
+            }
+
+            float progress = (float)completedAchievements / totalAchievements;
+            ImGui.ProgressBar(progress, new Vector2(-1, 20), $"{completedAchievements} / {totalAchievements} Achievements Completed");
+
+            ImGui.Spacing();
+            ImGui.Text("Incomplete Achievements:");
+            if (Achievements != null && Achievements.Count > 0)
+            {
+                ImGui.BeginChild("achievementsList", new Vector2(-1, -1), true);
+                foreach (var achievement in Achievements)
+                {
+                    if (AchievementCompletion.TryGetValue(achievement.RowId, out var isCompleted) && !isCompleted)
+                    {
+                        var icon = Plugin.TextureProvider.GetFromGameIcon((uint)achievement.Icon);
+                        if (icon != null)
+                        {
+                            ImGui.Image(icon.GetWrapOrEmpty().ImGuiHandle, new Vector2(40, 40));
+                        }
+                        ImGui.SameLine();
+                        if (ImGui.Selectable($"{achievement.Name} \t {achievement.AchievementCategory.Value.AchievementKind.Value.Name} \t {achievement.AchievementCategory.Value.Name} \t {achievement.Points} \n {achievement.Description} ##{achievement.RowId}", true, 0, new Vector2(0, 40)))
+                        {
+                            // Handle selection
+                        }
+                        ImGui.NewLine();
+                    }
+                }
+                ImGui.EndChild();
+            }
+            else
+            {
+                ImGui.Text("No achievements data available.");
+            }
         }
     }
 }
