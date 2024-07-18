@@ -1,12 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Numerics;
-using Dalamud.Interface.Internal;
-using Dalamud.Interface.Textures;
-using Dalamud.Interface.Utility;
 using Dalamud.Interface.Windowing;
-using Dalamud.IoC;
-using Dalamud.Plugin.Services;
 using ImGuiNET;
 using Lumina.Excel.GeneratedSheets;
 
@@ -14,10 +10,11 @@ namespace SamplePlugin.Windows
 {
     public class MainWindow : Window, IDisposable
     {
-        private Plugin Plugin;
-        private List<Achievement> Achievements;
-        private Dictionary<uint, bool> AchievementCompletion;
-        [PluginService] internal static ITextureProvider TextureProvider { get; private set; } = null!;
+        private readonly Plugin plugin;
+        private readonly List<Achievement> achievements;
+        private readonly Dictionary<uint, bool> achievementCompletion;
+        private string searchQuery = string.Empty;
+        public static bool achievementsChecked { get; set; } = false;
 
         public MainWindow(Plugin plugin, List<Achievement> achievements, Dictionary<uint, bool> achievementCompletion)
             : base("My Amazing Window##With a hidden ID", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse)
@@ -28,57 +25,117 @@ namespace SamplePlugin.Windows
                 MaximumSize = new Vector2(float.MaxValue, float.MaxValue)
             };
 
-            Plugin = plugin;
-            Achievements = achievements;
-            AchievementCompletion = achievementCompletion;
+            this.plugin = plugin;
+            this.achievements = achievements;
+            this.achievementCompletion = achievementCompletion;
         }
 
         public void Dispose() { }
 
         public override void Draw()
         {
-
-            int totalAchievements = Achievements.Count;
-            int completedAchievements = 0;
-            foreach (var achievement in Achievements)
+            if (!achievementsChecked)
             {
-                if (AchievementCompletion.TryGetValue(achievement.RowId, out var isCompleted) && isCompleted)
-                {
-                    completedAchievements++;
-                }
+                ImGui.Text("Please open the Achievements Journal in-game to load your achievements.");
+                return;
             }
+
+            int totalAchievements = achievements.Count;
+            int completedAchievements = achievements.Count(a => achievementCompletion.TryGetValue(a.RowId, out var isCompleted) && isCompleted);
 
             float progress = (float)completedAchievements / totalAchievements;
             ImGui.ProgressBar(progress, new Vector2(-1, 20), $"{completedAchievements} / {totalAchievements} Achievements Completed");
 
             ImGui.Spacing();
-            ImGui.Text("Incomplete Achievements:");
-            if (Achievements != null && Achievements.Count > 0)
+            ImGui.InputText("Search", ref searchQuery, 256);
+
+            ImGui.Spacing();
+
+            if (ImGui.BeginTabBar("AchievementTabs"))
             {
-                ImGui.BeginChild("achievementsList", new Vector2(-1, -1), true);
-                foreach (var achievement in Achievements)
+                if (ImGui.BeginTabItem("All Achievements"))
                 {
-                    if (AchievementCompletion.TryGetValue(achievement.RowId, out var isCompleted) && !isCompleted)
-                    {
-                        var icon = Plugin.TextureProvider.GetFromGameIcon((uint)achievement.Icon);
-                        if (icon != null)
-                        {
-                            ImGui.Image(icon.GetWrapOrEmpty().ImGuiHandle, new Vector2(40, 40));
-                        }
-                        ImGui.SameLine();
-                        if (ImGui.Selectable($"{achievement.Name} \t {achievement.AchievementCategory.Value.AchievementKind.Value.Name} \t {achievement.AchievementCategory.Value.Name} \t {achievement.Points} \n {achievement.Description} ##{achievement.RowId}", true, 0, new Vector2(0, 40)))
-                        {
-                            // Handle selection
-                        }
-                        ImGui.NewLine();
-                    }
+                    DisplayAchievements(achievement => FilterAchievements(achievement));
+                    ImGui.EndTabItem();
                 }
-                ImGui.EndChild();
+
+                if (ImGui.BeginTabItem("Incomplete Achievements"))
+                {
+                    DisplayAchievements(achievement => !achievementCompletion.TryGetValue(achievement.RowId, out var isCompleted) || !isCompleted && FilterAchievements(achievement));
+                    ImGui.EndTabItem();
+                }
+
+                if (ImGui.BeginTabItem("Completed Achievements"))
+                {
+                    DisplayAchievements(achievement => achievementCompletion.TryGetValue(achievement.RowId, out var isCompleted) && isCompleted && FilterAchievements(achievement));
+                    ImGui.EndTabItem();
+                }
+
+                if (ImGui.BeginTabItem("Recommendations"))
+                {
+                    DisplayRecommendations();
+                    ImGui.EndTabItem();
+                }
+
+                ImGui.EndTabBar();
             }
-            else
+        }
+
+        private bool FilterAchievements(Achievement achievement)
+        {
+            return string.IsNullOrEmpty(searchQuery) ||
+                   achievement.Name.ToString().Contains(searchQuery, StringComparison.OrdinalIgnoreCase) ||
+                   achievement.Description.ToString().Contains(searchQuery, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private void DisplayAchievements(Func<Achievement, bool> filter)
+        {
+            ImGui.BeginChild("achievementsList", new Vector2(-1, -1), true);
+            foreach (var achievement in achievements.Where(filter))
             {
-                ImGui.Text("No achievements data available.");
+                DisplayAchievement(achievement);
             }
+            ImGui.EndChild();
+        }
+
+        private void DisplayAchievement(Achievement achievement)
+        {
+            var icon = Plugin.TextureProvider.GetFromGameIcon((uint)achievement.Icon);
+            if (icon != null)
+            {
+                ImGui.Image(icon.GetWrapOrEmpty().ImGuiHandle, new Vector2(40, 40));
+            }
+            ImGui.SameLine();
+
+            if (achievementCompletion.TryGetValue(achievement.RowId, out var isCompleted) && isCompleted)
+            {
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.0f, 1.0f, 0.0f, 1.0f)); // Green color
+            }
+
+            var achievementName = achievement.Name?.ToString() ?? "Unknown";
+            var achievementKindName = achievement.AchievementCategory?.Value?.AchievementKind?.Value?.Name?.ToString() ?? "Unknown Kind";
+            var achievementCategoryName = achievement.AchievementCategory?.Value?.Name?.ToString() ?? "Unknown Category";
+            var achievementDescription = achievement.Description?.ToString() ?? "No description";
+
+            if (ImGui.Selectable($"{achievementName} \t {achievementKindName} \t {achievementCategoryName} \t {achievement.Points} \n {achievementDescription} ##{achievement.RowId}", true, 0, new Vector2(0, 40)))
+            {
+                // Handle selection
+            }
+
+            if (isCompleted)
+            {
+                ImGui.PopStyleColor();
+            }
+            ImGui.NewLine();
+        }
+
+
+
+
+        private void DisplayRecommendations()
+        {
+            // Placeholder for recommendation logic
+            ImGui.Text("Recommendations will be displayed here.");
         }
     }
 }

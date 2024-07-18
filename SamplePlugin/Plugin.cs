@@ -1,19 +1,12 @@
 using Dalamud.Game.Command;
 using Dalamud.IoC;
 using Dalamud.Plugin;
-using System.IO;
 using System.Collections.Generic;
 using Dalamud.Interface.Windowing;
 using Dalamud.Plugin.Services;
 using SamplePlugin.Windows;
-using Lumina;
-using Lumina.Data;
-using ExcelAchievement = Lumina.Excel.GeneratedSheets.Achievement;
-using GameUIAchievement = FFXIVClientStructs.FFXIV.Client.Game.UI.Achievement;
 using System;
-using Dalamud.Interface.Animation.EasingFunctions;
-using Lumina.Data.Parsing;
-using FFXIVClientStructs.FFXIV.Client.Game.Fate;
+using SamplePlugin.Data;
 
 namespace SamplePlugin
 {
@@ -21,11 +14,13 @@ namespace SamplePlugin
     {
         [PluginService] internal static IDalamudPluginInterface PluginInterface { get; private set; } = null!;
         [PluginService] internal static IDataManager DataManager { get; private set; } = null!;
-
         [PluginService] internal static ITextureProvider TextureProvider { get; private set; } = null!;
         [PluginService] internal static ICommandManager CommandManager { get; private set; } = null!;
         [PluginService] internal static IPluginLog PluginLog { get; private set; } = null!;
-        [PluginService] public static IClientState ClientState { get; set; } = null!;
+        [PluginService] internal static IClientState ClientState { get; set; } = null!;
+        [PluginService] internal static IFramework Framework { get; set; } = null!;
+        [PluginService] internal static IGameGui GameGui { get; set; } = null!;
+
         private const string CommandName = "/achievementbuddy";
         private const string AltCommandName = "/acb";
         public Configuration Configuration { get; init; }
@@ -34,17 +29,17 @@ namespace SamplePlugin
         private ConfigWindow ConfigWindow { get; init; }
         private MainWindow MainWindow { get; init; }
 
-        private GameData? gameData;
-        private List<ExcelAchievement> loadedAchievements = new List<ExcelAchievement>();
-        private Dictionary<uint, bool> achievementCompletion = new Dictionary<uint, bool>();
+        private readonly AchievementData achievementData;
 
         public Plugin()
         {
             Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
+            achievementData = new AchievementData();
+            achievementData.InitializeLumina();
+            achievementData.LoadAchievements();
 
-            InitializeLumina();
             ConfigWindow = new ConfigWindow(this);
-            MainWindow = new MainWindow(this, loadedAchievements, achievementCompletion);
+            MainWindow = new MainWindow(this, achievementData.GetLoadedAchievements(), achievementData.GetAchievementCompletion());
 
             WindowSystem.AddWindow(ConfigWindow);
             WindowSystem.AddWindow(MainWindow);
@@ -60,60 +55,36 @@ namespace SamplePlugin
             });
 
             PluginInterface.UiBuilder.Draw += DrawUI;
-
             PluginInterface.UiBuilder.OpenConfigUi += ToggleConfigUI;
             PluginInterface.UiBuilder.OpenMainUi += ToggleMainUI;
 
-            CheckAchievements();
+            // Subscribe to the framework update event to check for the achievement journal opening
+            Framework.Update += OnFrameworkUpdate;
         }
 
-        private void InitializeLumina()
+        private void OnFrameworkUpdate(IFramework framework)
         {
-            gameData = DataManager.GameData;
-            LoadAchievements();
-        }
-
-        private void LoadAchievements()
-        {
-            if (gameData == null) return;
-
-            var achievementsSheet = gameData.GetExcelSheet<ExcelAchievement>();
-            if (achievementsSheet != null)
+            // Check if the achievement journal is open
+            if (GameGui.GetAddonByName("Achievement", 1) != IntPtr.Zero)
             {
-                foreach (var achievement in achievementsSheet)
-                {
-                if (achievement.Points == 0) continue;
-                    if (achievement.AchievementCategory.Value.AchievementKind.Value.Name == "Legacy") continue;
-                    if (achievement.AchievementCategory.Value.Name == "Seasonal Events") continue;
-                    loadedAchievements.Add(achievement);
-                }
-            }
-        }
+                // Unsubscribe from the event to avoid repeated checks
+                Framework.Update -= OnFrameworkUpdate;
 
-        private unsafe void CheckAchievements()
-        {
-            var achievementInstance = GameUIAchievement.Instance();
-            if (achievementInstance == null) return;
-
-            foreach (var achievement in loadedAchievements)
-            {
-                if (achievementInstance->IsComplete((int)achievement.RowId))
-                {
-                    PluginLog.Info(achievement.Name);
-                };
-                bool isComplete = achievementInstance->IsComplete((int)achievement.RowId);
-                achievementCompletion[achievement.RowId] = isComplete;
+                // start checking for completed Achievements
+                achievementData.CheckAchievementCompletion();
             }
         }
 
         public void Dispose()
         {
             WindowSystem.RemoveAllWindows();
+            Framework.Update -= OnFrameworkUpdate;
 
             ConfigWindow.Dispose();
             MainWindow.Dispose();
 
             CommandManager.RemoveHandler(CommandName);
+            CommandManager.RemoveHandler(AltCommandName);
         }
 
         private void OnCommand(string command, string args)
