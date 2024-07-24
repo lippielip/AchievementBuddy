@@ -50,7 +50,7 @@ namespace SamplePlugin.Data
             }
 
             MainWindow.achievementsChecked = true;
-            Plugin.PluginLog.Info("Achievements checked.");
+            Plugin.PluginLog.Info("Completed Achievements Retrieved.");
         }
 
         public Dictionary<uint, bool> GetAchievementCompletion() => achievementCompletion;
